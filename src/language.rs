@@ -2,7 +2,7 @@ use {
     crate::{Error, Result},
     colored::Color,
     regex::Regex,
-    std::collections::HashMap,
+    std::{collections::HashMap, time::Instant},
     strum::{EnumIter, EnumString},
 };
 
@@ -359,12 +359,15 @@ impl Language {
         dir: &str,
         ignored_directories: Vec<&str>,
     ) -> Result<(Vec<(Language, f64)>, usize)> {
+        let now = Instant::now();
         let tokei_langs = project_languages(&dir, ignored_directories);
         let languages_stat =
             Language::get_languages_stat(&tokei_langs).ok_or(Error::SourceCodeNotFound)?;
         let mut stat_vec: Vec<(_, _)> = languages_stat.into_iter().collect();
         stat_vec.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().reverse());
         let loc = get_total_loc(&tokei_langs);
+        let new_now = Instant::now();
+        println!("get_language_stats --> {:?}", new_now.duration_since(now));
         Ok((stat_vec, loc))
     }
 

@@ -320,7 +320,7 @@ fn main() -> Result<()> {
         ignored_directories,
     )?;
 
-    print!("{}", info);
+    //print!("{}", info);
     Ok(())
 }
 

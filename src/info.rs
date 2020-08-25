@@ -9,7 +9,7 @@ use {
     futures::executor::block_on,
     git2::Repository,
     image::DynamicImage,
-    std::{ffi::OsStr, fmt::Write, fs, process::Command},
+    std::{ffi::OsStr, fmt::Write, fs, process::Command, time::Instant},
 };
 
 type Result<T> = std::result::Result<T, crate::Error>;
@@ -367,6 +367,7 @@ impl Info {
     }
 
     async fn get_configuration(repo: &Repository) -> Result<Configuration> {
+        let now = Instant::now();
         let config = repo.config().map_err(|_| Error::NoGitData)?;
         let mut remote_url = String::new();
         let mut repository_name = String::new();
@@ -397,7 +398,8 @@ impl Info {
             let parts: Vec<&str> = repo_name.split(".git").collect();
             repository_name = parts[0].to_string();
         }
-
+        let new_now = Instant::now();
+        println!("get_configuration --> {:?}", new_now.duration_since(now));
         Ok(Configuration {
             repository_name: repository_name.clone(),
             repository_url: name_parts.join("/"),
@@ -405,6 +407,7 @@ impl Info {
     }
 
     async fn get_current_commit_info(repo: &Repository) -> Result<CommitInfo> {
+        let now = Instant::now();
         let head = repo.head().map_err(|_| Error::ReferenceInfoError)?;
         let head_oid = head.target().ok_or(Error::ReferenceInfoError)?;
         let refs = repo.references().map_err(|_| Error::ReferenceInfoError)?;
@@ -423,11 +426,17 @@ impl Info {
                 Err(_) => None,
             })
             .collect::<Vec<String>>();
+        let new_now = Instant::now();
+        println!(
+            "get_current_commit_info --> {:?}",
+            new_now.duration_since(now)
+        );
         Ok(CommitInfo::new(head_oid, refs_info))
     }
 
     // Return first n most active commiters as authors within this project.
     async fn get_authors(dir: &str, no_merges: bool, n: usize) -> Vec<(String, usize, usize)> {
+        let now = Instant::now();
         let mut args = vec!["-C", dir, "log", "--format='%aN'"];
         if no_merges {
             args.push("--no-merges");
@@ -468,11 +477,13 @@ impl Info {
                 )
             })
             .collect();
-
+        let new_now = Instant::now();
+        println!("get_authors --> {:?}", new_now.duration_since(now));
         authors
     }
 
     async fn get_git_info(dir: &str) -> (String, String) {
+        let now = Instant::now();
         let version = Command::new("git")
             .arg("--version")
             .output()
@@ -488,10 +499,13 @@ impl Info {
             .output()
             .expect("Failed to execute git.");
         let username = String::from_utf8_lossy(&username.stdout).replace('\n', "");
+        let new_now = Instant::now();
+        println!("get_git_info --> {:?}", new_now.duration_since(now));
         (version, username)
     }
 
     async fn get_version(dir: &str) -> Result<String> {
+        let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
             .arg(dir)
@@ -502,7 +516,8 @@ impl Info {
             .expect("Failed to execute git.");
 
         let output = String::from_utf8_lossy(&output.stdout);
-
+        let new_now = Instant::now();
+        println!("get_version --> {:?}", new_now.duration_since(now));
         if output == "" {
             Ok("??".into())
         } else {
@@ -511,6 +526,7 @@ impl Info {
     }
 
     async fn get_commits(dir: &str, no_merges: bool) -> Result<String> {
+        let now = Instant::now();
         let mut args = vec!["-C", dir, "rev-list", "--count"];
         if no_merges {
             args.push("--no-merges");
@@ -524,6 +540,8 @@ impl Info {
 
         let output = String::from_utf8_lossy(&output.stdout);
 
+        let new_now = Instant::now();
+        println!("get_commits --> {:?}", new_now.duration_since(now));
         if output == "" {
             Ok("0".into())
         } else {
@@ -532,6 +550,7 @@ impl Info {
     }
 
     async fn get_pending_pending(dir: &str) -> Result<String> {
+        let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
             .arg(dir)
@@ -574,12 +593,14 @@ impl Info {
             if deleted > 0 {
                 result = format!("{} {}-", result, deleted);
             }
-
+            let new_now = Instant::now();
+            println!("get_pending_pending --> {:?}", new_now.duration_since(now));
             Ok(result.trim().into())
         }
     }
 
     async fn get_packed_size(dir: &str) -> Result<String> {
+        let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
             .arg(dir)
@@ -608,6 +629,8 @@ impl Info {
         // To check if command executed successfully or not
         let error = &output.stderr;
 
+        let new_now = Instant::now();
+        println!("get_packed_size --> {:?}", new_now.duration_since(now));
         if error.is_empty() {
             let output = String::from_utf8_lossy(&output.stdout);
 
@@ -627,6 +650,7 @@ impl Info {
     }
 
     async fn get_last_change(dir: &str) -> Result<String> {
+        let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
             .arg(dir)
@@ -637,7 +661,8 @@ impl Info {
             .expect("Failed to execute git.");
 
         let output = String::from_utf8_lossy(&output.stdout);
-
+        let new_now = Instant::now();
+        println!("get_last_change --> {:?}", new_now.duration_since(now));
         if output == "" {
             Ok("??".into())
         } else {
@@ -646,6 +671,7 @@ impl Info {
     }
 
     async fn get_creation_time(dir: &str) -> Result<String> {
+        let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
             .arg(dir)
@@ -662,10 +688,13 @@ impl Info {
             Some(creation_time) => creation_time.replace('"', ""),
             None => "??".into(),
         };
+        let new_now = Instant::now();
+        println!("get_creation_time --> {:?}", new_now.duration_since(now));
         Ok(output)
     }
 
     async fn get_project_license(dir: &str) -> Result<String> {
+        let now = Instant::now();
         fn is_license_file<S: AsRef<str>>(file_name: S) -> bool {
             LICENSE_FILES
                 .iter()
@@ -695,7 +724,8 @@ impl Info {
         output.sort();
         output.dedup();
         let output = output.join(", ");
-
+        let new_now = Instant::now();
+        println!("get_project_license --> {:?}", new_now.duration_since(now));
         if output == "" {
             Ok("??".into())
         } else {
