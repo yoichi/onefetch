@@ -308,31 +308,31 @@ impl Info {
 
         let (
             config,
+            git_history,
             current_commit_info,
-            authors,
             (git_v, git_user),
             version,
-            commits,
             pending,
             repo_size,
             last_change,
-            creation_date,
             project_license,
             dominant_language,
         ) = futures::join!(
             Info::get_configuration(&repo),
+            Info::get_git_history(workdir_str, no_merges),
             Info::get_current_commit_info(&repo),
-            Info::get_authors(workdir_str, no_merges, author_nb),
             Info::get_git_info(workdir_str),
             Info::get_version(workdir_str),
-            Info::get_commits(workdir_str, no_merges),
-            Info::get_pending_pending(workdir_str),
+            Info::get_pending_changes(workdir_str),
             Info::get_packed_size(workdir_str),
             Info::get_last_change(workdir_str),
-            Info::get_creation_time(workdir_str),
             Info::get_project_license(workdir_str),
             Language::get_dominant_language(&languages_stats)
         );
+
+        let creation_date = Info::get_creation_date(&git_history);
+        let number_of_commits = Info::get_number_of_commits(&git_history);
+        let authors = Info::get_authors(&git_history, author_nb);
 
         let conf = config?;
         Ok(Info {
@@ -347,7 +347,7 @@ impl Info {
             authors,
             last_change: last_change?,
             repo: conf.repository_url,
-            commits: commits?,
+            commits: number_of_commits,
             pending: pending?,
             repo_size: repo_size?,
             number_of_lines,
@@ -362,8 +362,28 @@ impl Info {
         })
     }
 
-    async fn get_configuration(repo: &Repository) -> Result<Configuration> {
+    async fn get_git_history(dir: &str, no_merges: bool) -> Vec<String> {
         let now = Instant::now();
+        let mut args = vec!["-C", dir, "log"];
+        if no_merges {
+            args.push("--no-merges");
+        }
+
+        args.push("--pretty=format:%cr%x09%an");
+
+        let output = Command::new("git")
+            .args(args)
+            .output()
+            .await
+            .expect("Failed to execute git.");
+
+        let output = String::from_utf8_lossy(&output.stdout);
+        let new_now = Instant::now();
+        println!("get_git_history --> {:?}", new_now.duration_since(now));
+        output.lines().map(|x| x.to_string()).collect::<Vec<_>>()
+    }
+
+    async fn get_configuration(repo: &Repository) -> Result<Configuration> {
         let config = repo.config().map_err(|_| Error::NoGitData)?;
         let mut remote_url = String::new();
         let mut repository_name = String::new();
@@ -387,7 +407,7 @@ impl Info {
 
         if !name_parts.is_empty() {
             repository_name = name_parts[name_parts.len() - 1].to_string();
-        }
+        }let now = Instant::now();
 
         if repository_name.contains(".git") {
             let repo_name = repository_name.clone();
@@ -430,40 +450,23 @@ impl Info {
         Ok(CommitInfo::new(head_oid, refs_info))
     }
 
-    // Return first n most active commiters as authors within this project.
-    async fn get_authors(dir: &str, no_merges: bool, n: usize) -> Vec<(String, usize, usize)> {
+    fn get_authors(git_history: &[String], n: usize) -> Vec<(String, usize, usize)> {
         let now = Instant::now();
-        let mut args = vec!["-C", dir, "log", "--format='%aN'"];
-        if no_merges {
-            args.push("--no-merges");
-        }
-
-        let output = Command::new("git")
-            .args(args)
-            .output()
-            .await
-            .expect("Failed to execute git.");
-
-        // create map for storing author name as a key and their commit count as value
         let mut authors = std::collections::HashMap::new();
         let mut total_commits = 0;
-        let output = String::from_utf8_lossy(&output.stdout);
-        for line in output.lines() {
-            let commit_count = authors.entry(line.to_string()).or_insert(0);
+        for line in git_history {
+            let commit_author = line.split('\u{09}').collect::<Vec<_>>()[1].to_string();
+            let commit_count = authors.entry(commit_author.to_string()).or_insert(0);
             *commit_count += 1;
             total_commits += 1;
         }
 
-        // sort authors by commit count where the one with most commit count is first
         let mut authors: Vec<(String, usize)> = authors.into_iter().collect();
         authors.sort_by_key(|(_, c)| *c);
         authors.reverse();
 
-        // truncate the vector so we only get the count of authors we specified as 'n'
         authors.truncate(n);
 
-        // get only authors without their commit count
-        // and string "'" prefix and suffix
         let authors: Vec<(String, usize, usize)> = authors
             .into_iter()
             .map(|(author, count)| {
@@ -525,32 +528,12 @@ impl Info {
         }
     }
 
-    async fn get_commits(dir: &str, no_merges: bool) -> Result<String> {
-        let now = Instant::now();
-        let mut args = vec!["-C", dir, "rev-list", "--count"];
-        if no_merges {
-            args.push("--no-merges");
-        }
-        args.push("HEAD");
-
-        let output = Command::new("git")
-            .args(args)
-            .output()
-            .await
-            .expect("Failed to execute git.");
-
-        let output = String::from_utf8_lossy(&output.stdout);
-
-        let new_now = Instant::now();
-        println!("get_commits --> {:?}", new_now.duration_since(now));
-        if output == "" {
-            Ok("0".into())
-        } else {
-            Ok(output.to_string().replace('\n', ""))
-        }
+    fn get_number_of_commits(git_history: &[String]) -> String {
+        let number_of_commits = git_history.len();
+        number_of_commits.to_string()
     }
 
-    async fn get_pending_pending(dir: &str) -> Result<String> {
+    async fn get_pending_changes(dir: &str) -> Result<String> {
         let now = Instant::now();
         let output = Command::new("git")
             .arg("-C")
@@ -675,27 +658,16 @@ impl Info {
         }
     }
 
-    async fn get_creation_time(dir: &str) -> Result<String> {
+    fn get_creation_date(git_history: &[String]) -> Result<String> {
         let now = Instant::now();
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .arg("log")
-            .arg("--reverse")
-            .arg("--pretty=oneline")
-            .arg("--format=\"%ar\"")
-            .output()
-            .await
-            .expect("Failed to execute git.");
+        let first_commit = git_history.last();
 
-        let output = String::from_utf8_lossy(&output.stdout);
-
-        let output = match output.lines().next() {
-            Some(creation_time) => creation_time.replace('"', ""),
+        let output = match first_commit {
+            Some(creation_time) => creation_time.split('\u{09}').collect::<Vec<_>>()[0].to_string(),
             None => "??".into(),
         };
         let new_now = Instant::now();
-        println!("get_creation_time --> {:?}", new_now.duration_since(now));
+        println!("get_last_change --> {:?}", new_now.duration_since(now));
         Ok(output)
     }
 
